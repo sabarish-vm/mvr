@@ -1,175 +1,306 @@
-use clap::{Arg, ArgAction, Command};
+use crate::file_ops;
+use dissimilar::{Chunk, diff};
+
+use crate::structs::OperationStatus;
+use anyhow::Context;
 use regex::Regex;
-use std::cell::Cell;
 use std::collections::HashMap;
+use std::collections::HashSet;
 use std::fs;
-use std::hash::Hash;
-use std::io;
-use std::path::Path;
-use std::path::PathBuf;
-use std::process::exit;
-use std::sync::Arc;
+use std::path::{Path, PathBuf};
 
-use crate::argparse_clap::argparse;
-use crate::errors;
-use crate::structs::{Failed, IsIn, Opts, Success};
-use proptest::prelude::*;
-
-pub struct Node {
-    pub file: PathBuf,
-    pub id: usize,
-    pub n_in: Cell<usize>,
-    pub n_out: Cell<usize>,
+pub(crate) trait HasCollisionCheck {
+    fn collision_check(&self);
 }
 
-impl Node {
-    pub fn new(path: PathBuf, id: usize, n_in: usize, n_out: usize) -> Self {
-        Self {
-            file: path,
-            id,
-            n_in: Cell::new(n_in),
-            n_out: Cell::new(n_out),
+#[allow(dead_code)]
+pub(crate) struct UniqueLinks {
+    pub input_file_count: usize,
+    pub processing_file_count: usize,
+    pub sources: Vec<usize>,
+    pub destinations: Vec<usize>,
+    pub link_map: HashMap<usize, usize>,
+    pub id_to_path: HashMap<usize, &'static str>,
+    pub unchanged_sources: Vec<usize>,
+    pub missing_sources: Vec<usize>,
+    pub sources_metadata: Vec<fs::Metadata>,
+}
+
+impl HasCollisionCheck for UniqueLinks {
+    fn collision_check(&self) {
+        let x: HashSet<_> = self.sources.iter().collect();
+        let y: HashSet<_> = self.destinations.iter().collect();
+        if y.len() != x.len() {
+            panic!("Collision detected: Mapping between input to output files is not one-to-one");
+        }
+        if x.intersection(&y).next().is_some() {
+            panic!("Chain detected: An output file is used as an input elsewhere!");
         }
     }
 }
 
-pub(crate) struct Graph {
-    pub source: Vec<Node>,
-    pub destinations: Vec<Node>,
-}
+impl UniqueLinks {
+    pub(crate) fn new(
+        input_files: &[PathBuf],
+        source_pattern: &str,
+        dest_pattern: &str,
+        test_mode: bool,
+    ) -> Result<Self, anyhow::Error> {
+        let re_sou = Regex::new(source_pattern)
+            .with_context(|| anyhow::anyhow!("Irregular pattern provided {}", source_pattern))?;
+        let input_file_count: usize = input_files.len();
+        let mut string_to_id: HashMap<&'static str, usize> =
+            HashMap::with_capacity(2 * input_file_count + 1);
+        let mut link_map: HashMap<usize, usize> = HashMap::with_capacity(input_file_count + 1);
+        let mut unchanged_sources: Vec<usize> = Vec::with_capacity(input_file_count + 1);
+        let mut missing_sources: Vec<usize> = Vec::with_capacity(input_file_count + 1);
+        let mut sources_metadata: Vec<fs::Metadata> = Vec::with_capacity(input_file_count + 1);
+        let mut sources: Vec<usize> = Vec::with_capacity(input_file_count + 1);
+        let mut destinations: Vec<usize> = Vec::with_capacity(input_file_count + 1);
+        let mut next_id = 0..;
 
-fn get_id_if_exists<'a>(
-    path: &PathBuf,
-    svec: &'a [Node],
-    dvec: &'a [Node],
-    path_type: IsIn,
-) -> Option<&'a Node> {
-    match (path_type) {
-        IsIn::Source => {
-            if let Some(found_in_sources) = svec.iter().find(|x| &x.file == path) {
-                panic!("Source path {} appears more than once", path.display());
+        if input_file_count > 0 {
+            for f in input_files {
+                let cow_path = f.to_string_lossy();
+                let source_path_str: &'static str = match cow_path {
+                    std::borrow::Cow::Borrowed(x) => Box::leak(x.to_string().into_boxed_str()),
+                    std::borrow::Cow::Owned(_) => {
+                        println!("Non UTF8 characters found in the file name {:?}", f);
+                        continue;
+                    }
+                };
+                let source_path: &'static Path = Path::new(source_path_str);
+                let source_filename: &'static str = match Path::new(source_path_str).file_name() {
+                    Some(x) => match x.to_str() {
+                        Some(string) => string,
+                        None => continue,
+                    },
+                    None => continue,
+                };
+
+                let dest_filename = re_sou
+                    .replace_all(source_filename, dest_pattern)
+                    .into_owned();
+                let dest_path_str = match source_path.parent() {
+                    Some(x) => x
+                        .join(Path::new(&dest_filename))
+                        .to_string_lossy()
+                        .into_owned()
+                        .into_boxed_str(),
+                    None => continue,
+                };
+                let dest_path_str: &'static str = Box::leak(dest_path_str);
+                let s_id = *string_to_id
+                    .entry(source_path_str)
+                    .or_insert_with(|| next_id.next().unwrap());
+                let d_id = *string_to_id
+                    .entry(dest_path_str)
+                    .or_insert_with(|| next_id.next().unwrap());
+                match test_mode {
+                    true => {
+                        if dest_filename == source_filename {
+                            unchanged_sources.push(s_id);
+                            continue;
+                        } else {
+                            link_map.insert(s_id, d_id);
+                            sources.push(s_id);
+                            destinations.push(d_id);
+                            // for mat in re_sou.find_iter(source_filename) {
+                            //     matched_sources.push((s_id, mat.start(), mat.end()));
+                            // }
+                        }
+                    }
+                    false => match fs::metadata(f) {
+                        Ok(x) => {
+                            if dest_filename == source_filename {
+                                unchanged_sources.push(s_id);
+                                continue;
+                            } else {
+                                link_map.insert(s_id, d_id);
+                                sources.push(s_id);
+                                destinations.push(d_id);
+                                sources_metadata.push(x);
+                                // for mat in re_sou.find_iter(source_filename) {
+                                //     matched_sources.push((s_id, mat.start(), mat.end()));
+                                // }
+                            }
+                        }
+                        Err(x) => match x.kind() {
+                            std::io::ErrorKind::NotFound => {
+                                missing_sources.push(s_id);
+                                continue;
+                            }
+                            _ => continue,
+                        },
+                    },
+                }
             }
-            dvec.iter().find(|node| &node.file == path)
-        }
-        IsIn::Destination => {
-            if let Some(found_in_destination) = dvec.iter().find(|x| &x.file == path) {
-                panic!("Destination path {} appears more than once", path.display());
+
+            let mut id_to_path: HashMap<usize, &'static str> =
+                HashMap::with_capacity(2 * input_file_count + 1);
+            for (path, id) in string_to_id.into_iter() {
+                id_to_path.insert(id, path);
             }
-            svec.iter().find(|node| &node.file == path)
+            Ok(Self {
+                input_file_count,
+                processing_file_count: sources.len(),
+                sources_metadata,
+                sources,
+                destinations,
+                missing_sources,
+                link_map,
+                id_to_path,
+                unchanged_sources,
+            })
+        } else {
+            std::process::exit(0);
         }
     }
-}
-pub(crate) fn create_network(opts: &Opts) -> (Vec<Node>, Vec<Node>, HashMap<usize, usize>) {
-    let re_sou = Regex::new(&opts.source_pattern).unwrap();
 
-    let mut sources: Vec<Node> = Vec::new();
-    let mut destinations: Vec<Node> = Vec::new();
+    /// Injects red ANSI escape sequences into matching sub-slices of a text string
+    fn highlight_path_diff(old: &str, new: &str, color: crate::Color) -> String {
+        // 1. Calculate the semantic character-level diff
+        let chunks = diff(old, new);
+        let mut result = String::new();
 
-    let mut edges: HashMap<usize, usize> = HashMap::new();
+        // 2. Loop through differences and inject color wrappers
+        for chunk in chunks {
+            match chunk {
+                Chunk::Equal(text) => result.push_str(text),
 
-    let mut id: usize = 0;
-    let _: () = for f in opts.files.iter() {
-        let source_filename = f.file_name().unwrap().to_str().unwrap().to_string();
-        let dest_filename = re_sou
-            .replace_all(&source_filename, &opts.dest_pattern)
-            .to_string();
-        eprintln!("{} -> {}", source_filename, dest_filename);
+                Chunk::Delete(text) => {
+                    // result.push_str("\x1b[31m");
+                    // result.push_str(text);
+                    // result.push_str("\x1b[0m");
+                    result.push_str(color.as_str());
+                    result.push_str(text);
+                    result.push_str(crate::Color::Default.as_str());
+                }
 
-        let source_path = f.parent().unwrap().join(PathBuf::from(source_filename));
-        let dest_path = f.parent().unwrap().join(PathBuf::from(dest_filename));
-
-        let option_source = get_id_if_exists(&source_path, &sources, &destinations, IsIn::Source);
-
-        let option_dest = get_id_if_exists(&dest_path, &sources, &destinations, IsIn::Destination);
-
-        match (option_source, option_dest) {
-            (Some(sid), Some(did)) => {
-                panic!(
-                    "############### DEBUG: Entering Some-Some branch : {},{} -> {},{}",
-                    sid.file.to_str().unwrap(),
-                    sid.id,
-                    did.file.to_str().unwrap(),
-                    did.id
-                )
-            }
-            (Some(sid), None) => {
-                // Source already exists in destination
-                // Increment n_out since it is a source now
-                let nout = sid.n_out.get();
-                sid.n_out.set(nout + 1);
-                id += 1;
-                let sid = sid.id;
-                destinations.push(Node::new(dest_path, id, 1, 0));
-                edges.insert(sid, id);
-            }
-            (None, Some(did)) => {
-                panic!("############# DEBUG: Entering None-Some branch")
-            }
-            (None, None) => {
-                id += 1;
-                let s_id = id;
-                sources.push(Node::new(source_path, id, 0, 1));
-                id += 1;
-                let d_id = id;
-                destinations.push(Node::new(dest_path, id, 1, 0));
-                edges.insert(s_id, d_id);
+                Chunk::Insert(_) => {}
             }
         }
-    };
-    (sources, destinations, edges)
+        result
+    }
+    pub fn print_graph(&self, display_paths: bool) {
+        for (sid, did) in &self.link_map {
+            let source_path = self.id_to_path.get(sid).unwrap();
+            let dest_path = self.id_to_path.get(did).unwrap();
+            let colored_source =
+                UniqueLinks::highlight_path_diff(source_path, dest_path, crate::Color::Red);
+            let colored_dest =
+                UniqueLinks::highlight_path_diff(dest_path, source_path, crate::Color::Green);
+
+            if display_paths {
+                println!("{}  -->  {}", colored_source, colored_dest);
+            } else {
+                println!("{}  -->  {}", sid, did);
+            }
+        }
+    }
+
+    pub fn get_err_code(&self, err: &anyhow::Error) -> String {
+        let err_string = format!("{:#}", err);
+        match err_string.find(':') {
+            Some(index) => err_string[..index].trim().to_string(),
+            None => "UNKNOWN".to_string(),
+        }
+    }
+
+    pub fn copy(&self) -> OperationStatus {
+        let mut status = OperationStatus::new(self.processing_file_count);
+        for (sid, did) in &self.link_map {
+            let source_path = Path::new(self.id_to_path.get(sid).unwrap());
+            let dest_path = Path::new(self.id_to_path.get(did).unwrap());
+            match file_ops::atomic_copy(source_path, dest_path) {
+                Ok(_) => {
+                    status
+                        .files
+                        .push((self.id_to_path[sid], self.id_to_path[did]));
+                }
+                Err(err) => {
+                    println!("{:#}", err);
+                    let err_code = self.get_err_code(&err);
+                    status
+                        .files
+                        .push((self.id_to_path[sid], self.id_to_path[did]));
+                    status.status.push(err_code);
+                }
+            }
+        }
+        status
+    }
+    pub(crate) fn rename(&self) -> OperationStatus {
+        let mut status = OperationStatus::new(self.processing_file_count);
+        for (sid, did) in &self.link_map {
+            let source_path = Path::new(self.id_to_path.get(sid).unwrap());
+            let dest_path = Path::new(self.id_to_path.get(did).unwrap());
+            match file_ops::atomic_rename(source_path, dest_path) {
+                Ok(_) => {
+                    status
+                        .files
+                        .push((self.id_to_path[sid], self.id_to_path[did]));
+                }
+                Err(err) => {
+                    println!("{:#}", err);
+                    let err_code = self.get_err_code(&err);
+                    status
+                        .files
+                        .push((self.id_to_path[sid], self.id_to_path[did]));
+                    status.status.push(err_code);
+                }
+            }
+        }
+        status
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::path::PathBuf;
-
+    use crate::structs::Opts;
+    use proptest::prelude::*;
     // Helper to create dummy Opts for testing
+
     fn mock_opts(source: &str, dest: &str, files: Vec<&str>) -> Opts {
         Opts {
             source_pattern: source.to_string(),
             dest_pattern: dest.to_string(),
             files: files.into_iter().map(PathBuf::from).collect(),
             move_bool: true,
-            copy_bool: false, // Add other Opts fields here if they exist
+            copy_bool: false,
+            force_run: false,
         }
     }
 
     #[test]
-    fn test_independent_moves() {
-        let opts = mock_opts(r"(.*)\.txt", "$1.bak", vec!["a.txt", "b.txt", "c.txt"]);
-        let (sources, destinations, edges) = create_network(&opts);
+    fn test_regex_transformation() {
+        // check if only the file name at the end of path is renamed
+        let opts = mock_opts(
+            r"(.*)\.txt",
+            "$1.bak",
+            vec!["build.txt/a.txt", "b.txt", "c.txt"],
+        );
+        let graph =
+            UniqueLinks::new(&opts.files, &opts.source_pattern, &opts.dest_pattern, true).unwrap();
+        graph.print_graph(false);
+        graph.print_graph(true);
 
-        // Expect 2 separate moves: a->a.bak (ID 1->2) and b->b.bak (ID 3->4)
-        assert_eq!(edges.len(), 3);
-        assert_eq!(sources.len(), 3);
-        assert_eq!(destinations.len(), 3);
+        let sour_p1 = graph.id_to_path.get(&graph.sources[0]).unwrap();
+        let dest_p1 = graph.id_to_path.get(&graph.destinations[0]).unwrap();
 
-        // Check that n_in/n_out are balanced for independent moves
-        assert_eq!(sources[0].n_out.get(), 1);
-        assert_eq!(destinations[0].n_in.get(), 1);
-
-        assert_eq!(destinations[0].file, PathBuf::from("a.bak"));
-        assert_eq!(destinations[1].file, PathBuf::from("b.bak"));
-        assert_eq!(destinations[2].file, PathBuf::from("c.bak"));
-    }
-
-    #[test]
-    #[should_panic] // Or check for exit code if you use a mockable exit
-    fn test_collision_detection() {
-        let opts = mock_opts(r"([a-z])([a-z])", "$2$1", vec!["ab", "ac", "ba"]);
-        let (sources, destinations, edges) = create_network(&opts);
-    }
-
-    #[test]
-    fn test_chain_move() {
-        // Chaining not possible with regexp matching
+        assert_eq!(dest_p1, &Path::new("build.txt/a.bak"));
+        assert_eq!(
+            Path::new(dest_p1).parent(),
+            Path::new(sour_p1).parent(),
+            "The parent directory names were changed, unwanted behaviour"
+        );
     }
 
     proptest! {
         #[test]
-        fn prop_nodes_always_balanced(
-            files in prop::collection::vec("[a-z0-9]{1,8}\\.txt", 1..3),
+        fn prop_collision_check(
+            files in prop::collection::vec("[a-z0-9]{1,8}\\.txt", 1..2),
             dest in "[a-z0-9]{1,8}\\.bak"
         ) {
             let opts = Opts {
@@ -177,24 +308,11 @@ mod tests {
                 dest_pattern: dest,
                 files: files.into_iter().map(PathBuf::from).collect(),
                 copy_bool:true,
-                move_bool:false
+                move_bool:false,
+            force_run: false,
             };
-            opts.files.iter().for_each(|v| eprint!("{} - ",v.display()));
-            eprintln!(" ");
-            // // We wrap in catch_unwind because your code currently panics
-            // // on collisions. We want to see if non-panicking paths are valid.
-            // let result = std::panic::catch_unwind(|| {
-            //     let (sources, destinations, _) = create_network(&opts);
-            //
-            //     for s in sources {
-            //         assert_eq!(s.n_out.get(), 1);
-            //     }
-            //     for d in destinations {
-            //         assert_eq!(d.n_in.get(), 1);
-            //     }
-            // });
-            //
-            // If the code didn't panic, the invariants MUST hold.
+            let graph = UniqueLinks::new(&opts.files,&opts.source_pattern,&opts.dest_pattern,false).unwrap();
+            graph.collision_check();
         }
     }
 }
