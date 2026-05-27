@@ -5,13 +5,14 @@ pub(crate) struct Opts {
     pub(crate) copy_bool: bool,
     pub(crate) move_bool: bool,
     pub(crate) force_run: bool,
+    pub(crate) log_bool: bool,
     pub(crate) source_pattern: String,
     pub(crate) dest_pattern: String,
 }
 
 pub(crate) struct OperationStatus {
     pub(crate) files: Vec<(&'static str, &'static str)>,
-    pub(crate) status: Vec<String>,
+    pub(crate) status: Vec<(String, String)>,
 }
 
 impl OperationStatus {
@@ -51,15 +52,4 @@ impl Color {
             Color::Default => "\x1b[0m",
         }
     }
-}
-
-#[allow(dead_code)]
-pub(crate) struct Segment {
-    pub(crate) text: String,
-    pub(crate) color: Color,
-}
-
-#[allow(dead_code)]
-pub(crate) struct ColoredString {
-    pub(crate) segments: Vec<Segment>,
 }

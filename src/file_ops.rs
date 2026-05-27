@@ -5,6 +5,13 @@ use std::os::unix::fs::MetadataExt;
 use std::path::Path;
 
 pub(crate) fn atomic_copy(source_path: &Path, dest_path: &Path) -> Result<(), anyhow::Error> {
+    if source_path.is_dir() {
+        anyhow::bail!(
+            "ECP_DIR : Source {:?} is a directory and copying directories is not yet handled",
+            source_path,
+        );
+    }
+
     let mut source_file = fs::File::open(source_path)?;
 
     let source_metadata = fs::metadata(source_path)
@@ -54,12 +61,43 @@ pub(crate) fn atomic_copy(source_path: &Path, dest_path: &Path) -> Result<(), an
     dest_file.sync_all()?;
 
     // 5. Copy permissions from source to destination
-    fs::set_permissions(dest_path, source_metadata.permissions())?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
 
+        // Extract the raw full Unix mode bits (e.g., 0o755, 0o644)
+        let source_mode = source_metadata.permissions().mode();
+
+        // Construct and force assign the absolute mode to the target path
+        let target_permissions = fs::Permissions::from_mode(source_mode);
+        fs::set_permissions(dest_path, target_permissions)?;
+    }
+    #[cfg(not(unix))]
+    {
+        fs::set_permissions(dest_path, source_metadata.permissions())?;
+    }
     Ok(())
 }
 
+// This is not truly atomic yet. The filecheck and rename decoupled non-atomic operations.
+// todo: use libc or rustix to do TOCTOU-safe renames.
 pub(crate) fn atomic_rename(source_path: &Path, dest_path: &Path) -> Result<(), anyhow::Error> {
+    match fs::exists(dest_path) {
+        Ok(x) => {
+            if x {
+                return Err(anyhow::anyhow!(
+                    "ERN001 : Target file {:?} already exists or was created mid-rename-operation.",
+                    dest_path
+                ));
+            }
+        }
+        Err(e) => {
+            return Err(anyhow::anyhow!(
+                "ERN002 : Some error during Filerename.  Details: {}",
+                e
+            ));
+        }
+    }
     match fs::rename(source_path, dest_path) {
         Ok(_) => Ok(()),
         Err(x) => match x.kind() {
@@ -75,7 +113,7 @@ pub(crate) fn atomic_rename(source_path: &Path, dest_path: &Path) -> Result<(), 
                 "Source and destination are on different devices. Aborting for safety."
             )),
             other_kind => Err(anyhow::anyhow!(
-                "EC001 : Some error during FileCopy. Kind: {:?}, Details: {}",
+                "ERN003 : Some error during FileCopy. Kind: {:?}, Details: {}",
                 other_kind,
                 x
             )),

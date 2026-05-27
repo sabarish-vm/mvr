@@ -6,7 +6,7 @@ use crate::structs::Opts;
 fn build_parser() -> Command {
     Command::new("File stat")
         .author("Sabarish, github.com/sabarish-vm")
-        .about("An alternative to stat command written in rust an os-independent solution")
+        .about("An alternative to zmv command from zsh written in rust")
         .arg(
             Arg::new("source_pattern")
                 .action(ArgAction::Set)
@@ -26,6 +26,7 @@ fn build_parser() -> Command {
         .arg(
             Arg::new("copy")
                 .short('c')
+                .long("copy")
                 .help("Flag to enable copying")
                 .action(ArgAction::SetTrue)
                 .default_value("false"),
@@ -33,6 +34,7 @@ fn build_parser() -> Command {
         .arg(
             Arg::new("move")
                 .short('m')
+                .long("move")
                 .help("Flag to enable moving")
                 .action(ArgAction::SetTrue)
                 .default_value("false"),
@@ -40,7 +42,16 @@ fn build_parser() -> Command {
         .arg(
             Arg::new("force")
                 .short('f')
+                .long("force")
                 .help("Flag to force the changes")
+                .action(ArgAction::SetTrue)
+                .default_value("false"),
+        )
+        .arg(
+            Arg::new("log")
+                .short('l')
+                .long("log")
+                .help("Flag to enable logging of changes to json file")
                 .action(ArgAction::SetTrue)
                 .default_value("false"),
         )
@@ -56,6 +67,7 @@ pub(crate) fn argparse() -> Opts {
     let m_bool: bool = matches.get_flag("move");
     let c_bool: bool = matches.get_flag("copy");
     let f_bool: bool = matches.get_flag("force");
+    let log_bool: bool = matches.get_flag("log");
     let sp = matches
         .get_one::<String>("source_pattern")
         .unwrap()
@@ -68,6 +80,7 @@ pub(crate) fn argparse() -> Opts {
         move_bool: m_bool,
         copy_bool: c_bool,
         force_run: f_bool,
+        log_bool,
         files,
         source_pattern: sp,
         dest_pattern: dp,
@@ -75,20 +88,5 @@ pub(crate) fn argparse() -> Opts {
 }
 
 #[cfg(test)]
-mod clap_argparse {
-    use super::*;
-    #[test]
-    #[should_panic]
-    fn test_empty_set() {
-        {
-            let args = vec!["-m", "(.*)", "$1.bak", ""];
-            let parser = build_parser();
-            parser.try_get_matches_from(args).unwrap();
-        }
-        {
-            let args = vec!["-m", "(.*)", "$1.bak", " "];
-            let parser = build_parser();
-            parser.try_get_matches_from(args).unwrap();
-        }
-    }
-}
+#[path = "./tests/argparse_test.rs"]
+mod argparse_test;

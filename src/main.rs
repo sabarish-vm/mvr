@@ -1,5 +1,6 @@
 mod argparse_clap;
 mod file_ops;
+mod logger;
 mod network;
 mod structs;
 
@@ -12,13 +13,32 @@ fn main() {
     let graph =
         network::UniqueLinks::new(&opts.files, &opts.source_pattern, &opts.dest_pattern, true)
             .unwrap();
-    println!("\n{} This is a DRY run {}", Color::Blue, Color::Default);
-    graph.print_graph(true);
     graph.collision_check();
 
+    if opts.copy_bool && !opts.force_run {
+        println!(
+            "\n{}This is a DRY run for copying {}",
+            Color::Blue,
+            Color::Default
+        );
+    } else if opts.move_bool && !opts.force_run {
+        println!(
+            "\n{}This is a DRY run for renaming/moving {}",
+            Color::Blue,
+            Color::Default
+        );
+    }
+    graph.print_graph(true);
+
     if opts.move_bool && opts.force_run {
-        graph.rename();
+        let status = graph.rename();
+        if opts.log_bool {
+            let _ = crate::logger::generate_json_string(&status);
+        }
     } else if opts.copy_bool && opts.force_run {
-        graph.copy();
+        let status = graph.copy();
+        if opts.log_bool {
+            let _ = crate::logger::generate_json_string(&status);
+        }
     }
 }

@@ -63,7 +63,7 @@ impl UniqueLinks {
             for f in input_files {
                 let cow_path = f.to_string_lossy();
                 let source_path_str: &'static str = match cow_path {
-                    std::borrow::Cow::Borrowed(x) => Box::leak(x.to_string().into_boxed_str()),
+                    std::borrow::Cow::Borrowed(x) => String::leak(x.to_string()),
                     std::borrow::Cow::Owned(_) => {
                         println!("Non UTF8 characters found in the file name {:?}", f);
                         continue;
@@ -85,11 +85,10 @@ impl UniqueLinks {
                     Some(x) => x
                         .join(Path::new(&dest_filename))
                         .to_string_lossy()
-                        .into_owned()
-                        .into_boxed_str(),
+                        .into_owned(),
                     None => continue,
                 };
-                let dest_path_str: &'static str = Box::leak(dest_path_str);
+                let dest_path_str: &'static str = String::leak(dest_path_str);
                 let s_id = *string_to_id
                     .entry(source_path_str)
                     .or_insert_with(|| next_id.next().unwrap());
@@ -199,11 +198,14 @@ impl UniqueLinks {
         }
     }
 
-    pub fn get_err_code(&self, err: &anyhow::Error) -> String {
+    pub fn get_err_code(&self, err: &anyhow::Error) -> (String, String) {
         let err_string = format!("{:#}", err);
         match err_string.find(':') {
-            Some(index) => err_string[..index].trim().to_string(),
-            None => "UNKNOWN".to_string(),
+            Some(index) => (
+                err_string[..index].trim().to_string(),
+                err_string[..index].trim().to_string(),
+            ),
+            None => ("UNKNOWN".to_string(), err_string.trim().to_string()),
         }
     }
 
@@ -217,6 +219,10 @@ impl UniqueLinks {
                     status
                         .files
                         .push((self.id_to_path[sid], self.id_to_path[did]));
+                    status.status.push((
+                        "Success".to_string(),
+                        "Operation successfully completed".to_string(),
+                    ));
                 }
                 Err(err) => {
                     println!("{:#}", err);
@@ -240,6 +246,10 @@ impl UniqueLinks {
                     status
                         .files
                         .push((self.id_to_path[sid], self.id_to_path[did]));
+                    status.status.push((
+                        "Success".to_string(),
+                        "Operation successfully completed".to_string(),
+                    ));
                 }
                 Err(err) => {
                     println!("{:#}", err);
@@ -256,63 +266,5 @@ impl UniqueLinks {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::structs::Opts;
-    use proptest::prelude::*;
-    // Helper to create dummy Opts for testing
-
-    fn mock_opts(source: &str, dest: &str, files: Vec<&str>) -> Opts {
-        Opts {
-            source_pattern: source.to_string(),
-            dest_pattern: dest.to_string(),
-            files: files.into_iter().map(PathBuf::from).collect(),
-            move_bool: true,
-            copy_bool: false,
-            force_run: false,
-        }
-    }
-
-    #[test]
-    fn test_regex_transformation() {
-        // check if only the file name at the end of path is renamed
-        let opts = mock_opts(
-            r"(.*)\.txt",
-            "$1.bak",
-            vec!["build.txt/a.txt", "b.txt", "c.txt"],
-        );
-        let graph =
-            UniqueLinks::new(&opts.files, &opts.source_pattern, &opts.dest_pattern, true).unwrap();
-        graph.print_graph(false);
-        graph.print_graph(true);
-
-        let sour_p1 = graph.id_to_path.get(&graph.sources[0]).unwrap();
-        let dest_p1 = graph.id_to_path.get(&graph.destinations[0]).unwrap();
-
-        assert_eq!(dest_p1, &Path::new("build.txt/a.bak"));
-        assert_eq!(
-            Path::new(dest_p1).parent(),
-            Path::new(sour_p1).parent(),
-            "The parent directory names were changed, unwanted behaviour"
-        );
-    }
-
-    proptest! {
-        #[test]
-        fn prop_collision_check(
-            files in prop::collection::vec("[a-z0-9]{1,8}\\.txt", 1..2),
-            dest in "[a-z0-9]{1,8}\\.bak"
-        ) {
-            let opts = Opts {
-                source_pattern: r"(.*)\.txt".to_string(),
-                dest_pattern: dest,
-                files: files.into_iter().map(PathBuf::from).collect(),
-                copy_bool:true,
-                move_bool:false,
-            force_run: false,
-            };
-            let graph = UniqueLinks::new(&opts.files,&opts.source_pattern,&opts.dest_pattern,false).unwrap();
-            graph.collision_check();
-        }
-    }
-}
+#[path = "./tests/network_file_test.rs"]
+mod network_file_test;
