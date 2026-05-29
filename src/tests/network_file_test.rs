@@ -1,23 +1,11 @@
 #![cfg(test)]
-use crate::network::HasCollisionCheck;
-use crate::network::UniqueLinks;
+use crate::graph::HasCollisionCheck;
+use crate::graph::UniqueLinks;
 use crate::structs::{Color, Opts};
 use proptest::prelude::*;
 use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
-
-fn mock_opts(source: &str, dest: &str, files: Vec<&str>) -> Opts {
-    Opts {
-        source_pattern: source.to_string(),
-        dest_pattern: dest.to_string(),
-        files: files.into_iter().map(PathBuf::from).collect(),
-        move_bool: true,
-        copy_bool: false,
-        force_run: false,
-        log_bool: false,
-    }
-}
 
 #[test]
 #[should_panic(expected = "Collision detected")]
@@ -42,35 +30,51 @@ fn test_collision_detection() {
 
 #[test]
 #[should_panic(expected = "Chain detected")] // Expect panic on chain
-fn test_chain_detection() {
+fn test_3_chain_detection() {
     let temp_dir = tempfile::tempdir().unwrap();
     let file1 = temp_dir.path().join("a.txt");
-    let file2 = temp_dir.path().join("b.txt"); // This is the output of file1
-    let file3 = temp_dir.path().join("c.txt"); // This is the output of file1
+    let file2 = temp_dir.path().join("b.txt");
+    let file3 = temp_dir.path().join("c.txt");
     std::fs::write(&file1, "").unwrap();
     std::fs::write(&file2, "").unwrap();
     std::fs::write(&file3, "").unwrap();
 
-    // file1 → out.txt, file2 (out.txt) → final.txt → chain!
     let input_files = vec![file1, file2, file3];
-    let unique_links = UniqueLinks::new(
-        &input_files,
-        r"(.*)",
-        r"${1}", // file1 → out.txt
-        false,
-    )
-    .unwrap();
+    // This generated graph is irrelevant, its fields will be overwritten below
+    let unique_links = UniqueLinks::new(&input_files, r"(.*)", r"${1}", false).unwrap();
 
-    // Manually add file2 → final.txt to simulate a chain
-    // (In real usage, this would happen if file2 is also an input)
     let unique_links = UniqueLinks {
-        sources: vec![0, 1],      // file1 (id=0), file2 (id=1)
-        destinations: vec![1, 2], // file1 → out.txt (id=1), file2 → final.txt (id=2)
-        link_map: HashMap::from([(0, 1), (1, 2)]),
+        sources: vec![0, 1, 2],      // file1 (id=0), file2 (id=1), file3 (id=2)
+        destinations: vec![1, 2, 0], // file1 → file2, file2 → file3, file3->file1
+        link_map: HashMap::from([(0, 1), (1, 2), (2, 0)]),
         ..unique_links
     };
 
-    unique_links.collision_check(); // Should panic (chain: 1 is both dest and source)
+    unique_links.collision_check(); // Should panic
+}
+#[test]
+#[should_panic(expected = "Chain detected")]
+fn test_2_chain_detection() {
+    let temp_dir = tempfile::tempdir().unwrap();
+    let file1 = temp_dir.path().join("a.txt");
+    let file2 = temp_dir.path().join("b.txt");
+    let file3 = temp_dir.path().join("c.txt");
+    std::fs::write(&file1, "").unwrap();
+    std::fs::write(&file2, "").unwrap();
+    std::fs::write(&file3, "").unwrap();
+
+    let input_files = vec![file1, file2, file3];
+    // This generated graph is irrelevant, its fields will be overwritten below
+    let unique_links = UniqueLinks::new(&input_files, r"(.*)", r"${1}", false).unwrap();
+
+    let unique_links = UniqueLinks {
+        sources: vec![0, 1],      // file1 (id=0), file2 (id=1)
+        destinations: vec![1, 0], // file1 → file2, file2 → file1
+        link_map: HashMap::from([(0, 1), (1, 0)]),
+        ..unique_links
+    };
+
+    unique_links.collision_check();
 }
 
 #[test]
@@ -82,22 +86,12 @@ fn test_new_valid_regex_mapping() {
     fs::write(&file2, "").unwrap();
 
     let input_files = vec![file1, file2];
-    let unique_links = UniqueLinks::new(
-        &input_files,
-        r"(a|b)\.txt", // Match a.txt or b.txt
-        "new_${0}",    // Replace with new_a.txt, new_b.txt
-        false,         // test_mode
-    )
-    .unwrap();
+    let unique_links = UniqueLinks::new(&input_files, r"(a|b)\.txt", "new_${0}", false).unwrap();
 
-    // Verify:
-    // - 2 input files were processed
-    // - 2 files will be renamed (no unchanged)
-    // - No collisions/chains
     assert_eq!(unique_links.input_file_count, 2);
     assert_eq!(unique_links.processing_file_count, 2);
     assert!(unique_links.unchanged_sources.is_empty());
-    unique_links.collision_check(); // Should NOT panic
+    unique_links.collision_check();
 }
 
 #[test]
@@ -109,17 +103,7 @@ fn test_mix_changed_unchanged_files() {
     fs::write(&file2, "").unwrap();
 
     let input_files = vec![file1, file2];
-    let unique_links = UniqueLinks::new(
-        &input_files,
-        r"a.txt", // Match a.txt
-        "2.txt",  // Replace with... a.txt (no change)
-        false,
-    )
-    .unwrap();
-    // Verify:
-    // - 1 input file
-    // - 0 files to process (unchanged)
-    // - 1 unchanged file
+    let unique_links = UniqueLinks::new(&input_files, r"a.txt", "2.txt", false).unwrap();
     assert_eq!(unique_links.input_file_count, 2);
     assert_eq!(unique_links.processing_file_count, 1);
     assert_eq!(unique_links.unchanged_sources.len(), 1);
@@ -133,41 +117,22 @@ fn test_unchanged_files() {
     fs::write(&file2, "").unwrap();
 
     let input_files = vec![file1, file2];
-    let unique_links = UniqueLinks::new(
-        &input_files,
-        r"a.txt", // Match a.txt
-        "a.txt",  // Replace with... a.txt (no change)
-        false,
-    )
-    .unwrap();
-    // Verify:
-    // - 1 input file
-    // - 0 files to process (unchanged)
-    // - 1 unchanged file
+    let unique_links = UniqueLinks::new(&input_files, "a.txt", "a.txt", false).unwrap();
     assert_eq!(unique_links.input_file_count, 2);
     assert_eq!(unique_links.processing_file_count, 0);
     assert_eq!(unique_links.unchanged_sources.len(), 2);
 }
 
 #[test]
-fn test_new_missing_files() {
+fn test_missing_files() {
     let temp_dir = tempfile::tempdir().unwrap();
     let file1 = temp_dir.path().join("exists.txt");
-    let file2 = temp_dir.path().join("missing.txt"); // Doesn't exist
-    fs::write(&file1, "").unwrap(); // create exists.txt only
+    let file2 = temp_dir.path().join("missing.txt");
+    fs::write(&file1, "").unwrap(); // create exists.txt
 
     let input_files = vec![file1, file2];
-    let unique_links = UniqueLinks::new(
-        &input_files,
-        r".*\.txt", // Match all .txt files
-        "out.txt",  // Irrelevant (file2 is missing)
-        false,      // test_mode=false → check filesystem
-    )
-    .unwrap();
+    let unique_links = UniqueLinks::new(&input_files, r".*\.txt", "out.txt", false).unwrap();
 
-    // Verify:
-    // - 1 existing file processed
-    // - 1 missing file tracked
     assert_eq!(unique_links.input_file_count, 2);
     assert_eq!(unique_links.processing_file_count, 1);
     assert_eq!(unique_links.missing_sources.len(), 1);
@@ -175,14 +140,15 @@ fn test_new_missing_files() {
 
 #[test]
 // check if only the file name at the end of path is renamed
-fn test_regex_transformation() {
-    let opts = mock_opts(
-        r"(.*)\.txt",
-        "$1.bak",
-        vec!["build.txt/a.txt", "b.txt", "c.txt"],
-    );
-    let graph =
-        UniqueLinks::new(&opts.files, &opts.source_pattern, &opts.dest_pattern, true).unwrap();
+fn test_path_regex_transformation() {
+    let temp_base_dir = tempfile::tempdir().unwrap();
+    let build_dir = temp_base_dir.path().join("build.txt");
+    let _ = std::fs::create_dir(&build_dir);
+    let file1 = build_dir.clone().join("a.txt");
+    let file2 = temp_base_dir.path().join("b.txt");
+    let file3 = temp_base_dir.path().join("c.txt");
+    let files = vec![file1, file2, file3];
+    let graph = UniqueLinks::new(&files, r"(.*)\.txt", "$1.bak", false).unwrap();
 
     let sour_p1 = graph.id_to_path.get(&graph.sources[0]).unwrap();
     let dest_p1 = graph.id_to_path.get(&graph.destinations[0]).unwrap();
@@ -224,28 +190,18 @@ fn test_copy_execution() {
     fs::write(&file2, "world").unwrap();
 
     let input_files = vec![file1, file2];
-    let unique_links = UniqueLinks::new(
-        &input_files,
-        r"(a|b)\.txt",
-        "new_${0}", // a.txt → new_a.txt, b.txt → new_b.txt
-        false,
-    )
-    .unwrap();
+    let unique_links = UniqueLinks::new(&input_files, r"(a|b)\.txt", "new_${0}", false).unwrap();
     unique_links.print_graph(true);
-    // Execute rename
     let status = unique_links.copy();
 
-    // Verify:
-    // - Original files are gone
-    // - New files exist
     assert!(temp_dir.path().join("a.txt").exists());
     assert!(temp_dir.path().join("b.txt").exists());
     assert!(temp_dir.path().join("new_a.txt").exists());
     assert!(temp_dir.path().join("new_b.txt").exists());
     assert_eq!(status.files.len(), 2);
 }
-#[test]
 
+#[test]
 fn test_rename_execution() {
     let temp_dir = tempfile::tempdir().unwrap();
     let file1 = temp_dir.path().join("a.txt");
@@ -254,20 +210,9 @@ fn test_rename_execution() {
     fs::write(&file2, "world").unwrap();
 
     let input_files = vec![file1, file2];
-    let unique_links = UniqueLinks::new(
-        &input_files,
-        r"(a|b)\.txt",
-        "new_${0}", // a.txt → new_a.txt, b.txt → new_b.txt
-        false,
-    )
-    .unwrap();
-    unique_links.print_graph(true);
-    // Execute rename
+    let unique_links = UniqueLinks::new(&input_files, r"(a|b)\.txt", "new_${0}", false).unwrap();
     let status = unique_links.rename();
 
-    // Verify:
-    // - Original files are gone
-    // - New files exist
     assert!(!temp_dir.path().join("a.txt").exists());
     assert!(!temp_dir.path().join("b.txt").exists());
     assert!(temp_dir.path().join("new_a.txt").exists());
@@ -284,19 +229,10 @@ fn test_rename_destination_exists() {
     fs::write(&file2, "blocking").unwrap();
 
     let input_files = vec![file1];
-    let unique_links = UniqueLinks::new(
-        &input_files,
-        r"a\.txt",
-        "new_$0", // a.txt → new_a.txt (but new_a.txt already exists!)
-        false,
-    )
-    .unwrap();
+    let unique_links = UniqueLinks::new(&input_files, r"a\.txt", "new_$0", false).unwrap();
 
     let status = unique_links.rename();
 
-    // Verify:
-    // - Original file still exists (rename failed)
-    // - Error was recorded
     assert!(temp_dir.path().join("a.txt").exists());
     assert_eq!(status.status.len(), 1);
     assert!(status.status[0].0.contains("ERN001"));
@@ -306,24 +242,14 @@ fn test_rename_destination_exists() {
 fn test_rename_destination_is_directory() {
     let temp_dir = tempfile::tempdir().unwrap();
     let file1 = temp_dir.path().join("a.txt");
-    let dest_dir = temp_dir.path().join("new_a.txt"); // Create as a directory
+    let dest_dir = temp_dir.path().join("new_a.txt");
     fs::write(&file1, "hello").unwrap();
-    fs::create_dir(&dest_dir).unwrap(); // Destination is a directory!
+    fs::create_dir(&dest_dir).unwrap();
 
     let input_files = vec![file1];
-    let unique_links = UniqueLinks::new(
-        &input_files,
-        r"a\.txt",
-        "new_$0", // a.txt → new_a.txt (but new_a.txt is a directory!)
-        false,
-    )
-    .unwrap();
+    let unique_links = UniqueLinks::new(&input_files, r"a\.txt", "new_$0", false).unwrap();
 
     let status = unique_links.rename();
-
-    // Verify:
-    // - Original file still exists (rename failed)
-    // - Error was recorded
     assert!(temp_dir.path().join("a.txt").exists());
     assert_eq!(status.status.len(), 1);
     assert!(status.status[0].0.contains("ERN001"));
@@ -331,29 +257,14 @@ fn test_rename_destination_is_directory() {
 
 #[test]
 fn test_get_err_code() {
-    let temp_dir = tempfile::tempdir().unwrap();
-    let file1 = temp_dir.path().join("a.txt");
-    let file2 = temp_dir.path().join("new_a.txt"); // Pre-create destination
-    fs::write(&file1, "hello").unwrap();
-    fs::write(&file2, "blocking").unwrap();
-
-    let input_files = vec![file1, file2];
-    let unique_links = UniqueLinks::new(
-        &input_files,
-        r"a\.txt",
-        "new_$0", // a.txt → new_a.txt (but new_a.txt is a directory!)
-        false,
-    )
-    .unwrap();
-
     // Test with a known error code
     let err = anyhow::anyhow!("ECP005: Source and destination are on different devices");
-    let code = unique_links.get_err_code(&err);
+    let code = UniqueLinks::get_err_code(&err);
     assert_eq!(code.0, "ECP005");
 
     // Test with no colon (fallback to "UNKNOWN")
     let err = anyhow::anyhow!("Some generic error");
-    let code = unique_links.get_err_code(&err);
+    let code = UniqueLinks::get_err_code(&err);
     assert_eq!(code.0, "UNKNOWN");
 }
 
@@ -372,46 +283,30 @@ fn test_highlight_path_diff() {
 fn test_copy_destination_exists() {
     let temp_dir = tempfile::tempdir().unwrap();
     let file1 = temp_dir.path().join("a.txt");
-    let file2 = temp_dir.path().join("new_a.txt"); // Pre-create destination
+    let file2 = temp_dir.path().join("new_a.txt");
     fs::write(&file1, "hello").unwrap();
     fs::write(&file2, "blocking").unwrap();
 
     let input_files = vec![file1];
-    let unique_links = UniqueLinks::new(
-        &input_files,
-        r"a\.txt",
-        "new_$0", // a.txt → new_a.txt (but new_a.txt already exists!)
-        false,
-    )
-    .unwrap();
+    let unique_links = UniqueLinks::new(&input_files, r"a\.txt", "new_$0", false).unwrap();
 
     let status = unique_links.copy();
 
-    // Verify:
-    // - Original file still exists (copy failed)
-    // - Error was recorded (ECP006 for TOCTOU)
     assert!(temp_dir.path().join("a.txt").exists());
     assert_eq!(status.status.len(), 1);
     assert!(status.status[0].0.contains("ECP006"));
 }
+
 #[test]
-fn test_new_no_matching_files() {
+fn test_no_matching_files() {
     let temp_dir = tempfile::tempdir().unwrap();
     let file1 = temp_dir.path().join("a.txt");
     fs::write(&file1, "").unwrap();
 
     let input_files = vec![file1];
-    let unique_links = UniqueLinks::new(
-        &input_files,
-        r"nonexistent\.txt", // Pattern matches nothing
-        "new_$0.txt",
-        true,
-    )
-    .unwrap();
+    let unique_links =
+        UniqueLinks::new(&input_files, r"nonexistent\.txt", "new_$0.txt", true).unwrap();
 
-    // Verify:
-    // - Input file count is correct
-    // - No files to process (pattern didn't match)
     assert_eq!(unique_links.input_file_count, 1);
     assert_eq!(unique_links.processing_file_count, 0);
     assert!(unique_links.sources.is_empty());
@@ -435,11 +330,8 @@ fn test_regex_special_chars_in_filenames() {
     )
     .unwrap();
 
-    // Verify:
-    // - Both files were processed
-    // - No collisions/chains
     assert_eq!(unique_links.processing_file_count, 2);
-    unique_links.collision_check(); // Should NOT panic
+    unique_links.collision_check();
 }
 
 #[test]
@@ -449,19 +341,10 @@ fn test_copy_parent_dir_missing() {
     fs::write(&file1, "hello").unwrap();
 
     let input_files = vec![file1];
-    let unique_links = UniqueLinks::new(
-        &input_files,
-        r".*",               // Match entire filename
-        "nonexistent/b.txt", // Destination: <temp_dir>/nonexistent/b.txt
-        false,
-    )
-    .unwrap();
+    let unique_links = UniqueLinks::new(&input_files, r".*", "nonexistent/b.txt", false).unwrap();
 
     let status = unique_links.copy();
 
-    // Verify:
-    // - Original file still exists (copy failed)
-    // - Error was recorded (ECP004)
     assert!(temp_dir.path().join("a.txt").exists());
     assert_eq!(status.status.len(), 1);
     assert!(status.status[0].0.contains("ECP004"));
@@ -473,19 +356,10 @@ fn test_rename_parent_dir_missing() {
     fs::write(&file1, "hello").unwrap();
 
     let input_files = vec![file1];
-    let unique_links = UniqueLinks::new(
-        &input_files,
-        r".*",               // Match entire filename
-        "nonexistent/b.txt", // Destination: <temp_dir>/nonexistent/b.txt
-        false,
-    )
-    .unwrap();
+    let unique_links = UniqueLinks::new(&input_files, r".*", "nonexistent/b.txt", false).unwrap();
 
     let status = unique_links.rename();
 
-    // Verify:
-    // - Original file still exists (rename failed)
-    // - Error was recorded (EC001, since rename() doesn't check parent explicitly)
     assert!(temp_dir.path().join("a.txt").exists());
     assert_eq!(status.status.len(), 1);
     assert!(status.status[0].0.contains("ERN003"));
@@ -535,17 +409,8 @@ fn test_rename_with_symlink() {
 #[test]
 fn test_no_ops() {
     let input_files: Vec<PathBuf> = vec![];
-    let unique_links = UniqueLinks::new(
-        &input_files,
-        r".*",    // Pattern (irrelevant, no files to match)
-        "new_$0", // Replacement (irrelevant)
-        true,
-    )
-    .unwrap();
+    let unique_links = UniqueLinks::new(&input_files, r".*", "new_$0", true).unwrap();
 
-    // Verify:
-    // - No input files
-    // - No files to process
     assert_eq!(unique_links.input_file_count, 0);
     assert_eq!(unique_links.processing_file_count, 0);
     assert!(unique_links.sources.is_empty());
@@ -557,23 +422,14 @@ fn test_rename_with_spaces() {
     let temp_dir = tempfile::tempdir().unwrap();
     let file1 = temp_dir.path().join("my file.txt");
     let file2 = temp_dir.path().join("another file.log");
-    fs::write(&file1, "hello").unwrap();
-    fs::write(&file2, "world").unwrap();
+    fs::write(&file1, "").unwrap();
+    fs::write(&file2, "").unwrap();
 
     let input_files = vec![file1.clone(), file2.clone()];
-    let unique_links = UniqueLinks::new(
-        &input_files,
-        r".* file\..*", // Match "my file.txt" and "another file.log"
-        "new_$0",       // Rename to "new_my file.txt", etc.
-        false,          // test_mode=false → actually rename
-    )
-    .unwrap();
+    let unique_links = UniqueLinks::new(&input_files, r".* file\..*", "new_$0", false).unwrap();
 
     let status = unique_links.rename();
 
-    // Verify:
-    // - Original files are gone
-    // - New files exist
     assert!(!file1.exists());
     assert!(!file2.exists());
     assert!(temp_dir.path().join("new_my file.txt").exists());
@@ -588,7 +444,7 @@ fn test_copy_preserves_permissions() {
     let file1 = base_path.join("a.txt");
     fs::write(&file1, "hello").unwrap();
 
-    // Set permissions (platform-specific)
+    // Set permissions
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
@@ -601,7 +457,7 @@ fn test_copy_preserves_permissions() {
 
     let dest_path = base_path.join("b.txt");
 
-    // Verify permissions (platform-specific)
+    // Verify permissions
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;

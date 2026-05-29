@@ -1,17 +1,17 @@
 mod argparse_clap;
 mod file_ops;
+mod graph;
 mod logger;
-mod network;
 mod structs;
 
 use crate::argparse_clap::argparse;
-use crate::network::HasCollisionCheck;
+use crate::graph::HasCollisionCheck;
 use crate::structs::Color;
 
 fn main() {
     let opts = argparse();
     let graph =
-        network::UniqueLinks::new(&opts.files, &opts.source_pattern, &opts.dest_pattern, true)
+        graph::UniqueLinks::new(&opts.files, &opts.source_pattern, &opts.dest_pattern, true)
             .unwrap();
     graph.collision_check();
 
@@ -27,6 +27,8 @@ fn main() {
             Color::Blue,
             Color::Default
         );
+    } else {
+        println!();
     }
     graph.print_graph(true);
 

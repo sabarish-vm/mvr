@@ -104,9 +104,6 @@ impl UniqueLinks {
                             link_map.insert(s_id, d_id);
                             sources.push(s_id);
                             destinations.push(d_id);
-                            // for mat in re_sou.find_iter(source_filename) {
-                            //     matched_sources.push((s_id, mat.start(), mat.end()));
-                            // }
                         }
                     }
                     false => match fs::metadata(f) {
@@ -119,9 +116,6 @@ impl UniqueLinks {
                                 sources.push(s_id);
                                 destinations.push(d_id);
                                 sources_metadata.push(x);
-                                // for mat in re_sou.find_iter(source_filename) {
-                                //     matched_sources.push((s_id, mat.start(), mat.end()));
-                                // }
                             }
                         }
                         Err(x) => match x.kind() {
@@ -168,9 +162,6 @@ impl UniqueLinks {
                 Chunk::Equal(text) => result.push_str(text),
 
                 Chunk::Delete(text) => {
-                    // result.push_str("\x1b[31m");
-                    // result.push_str(text);
-                    // result.push_str("\x1b[0m");
                     result.push_str(color.as_str());
                     result.push_str(text);
                     result.push_str(crate::Color::Default.as_str());
@@ -198,7 +189,7 @@ impl UniqueLinks {
         }
     }
 
-    pub fn get_err_code(&self, err: &anyhow::Error) -> (String, String) {
+    pub fn get_err_code(err: &anyhow::Error) -> (String, String) {
         let err_string = format!("{:#}", err);
         match err_string.find(':') {
             Some(index) => (
@@ -226,7 +217,7 @@ impl UniqueLinks {
                 }
                 Err(err) => {
                     println!("{:#}", err);
-                    let err_code = self.get_err_code(&err);
+                    let err_code = UniqueLinks::get_err_code(&err);
                     status
                         .files
                         .push((self.id_to_path[sid], self.id_to_path[did]));
@@ -253,7 +244,7 @@ impl UniqueLinks {
                 }
                 Err(err) => {
                     println!("{:#}", err);
-                    let err_code = self.get_err_code(&err);
+                    let err_code = UniqueLinks::get_err_code(&err);
                     status
                         .files
                         .push((self.id_to_path[sid], self.id_to_path[did]));
