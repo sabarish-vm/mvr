@@ -7,6 +7,7 @@ fn build_parser() -> Command {
     Command::new("File stat")
         .author("Sabarish, github.com/sabarish-vm")
         .about("An alternative to zmv command from zsh written in rust")
+        .arg_required_else_help(true)
         .arg(
             Arg::new("source_pattern")
                 .action(ArgAction::Set)

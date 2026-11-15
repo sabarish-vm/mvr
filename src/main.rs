@@ -27,9 +27,8 @@ fn main() {
             Color::Blue,
             Color::Default
         );
-    } else {
-        println!();
     }
+
     graph.print_graph(true);
 
     if opts.move_bool && opts.force_run {
