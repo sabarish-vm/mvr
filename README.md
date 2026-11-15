@@ -2,7 +2,9 @@
 
 A tool inspired by `zmv` from `zsh` for linux and macOS. A cli tool that can move and also copy based on regex patterns.
 
-# Core principles (subject to change):
+# Core behavior :
+
+The core behavior listed here is subject to minor revisions.
 
 - mvr constructs a graph connecting old filenames to new filenames.
 - The plan is validated before execution. Collisions (A→C and B→C) and chains (A→B and B→C) are detected by checking the graph before any file is touched.
