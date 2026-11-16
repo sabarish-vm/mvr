@@ -9,7 +9,13 @@ use crate::graph::HasCollisionCheck;
 use crate::structs::Color;
 
 fn main() -> anyhow::Result<()> {
-    let opts = argparse()?;
+    let (opts, completion_shell) = argparse()?;
+
+    if let Some(shell) = completion_shell {
+        crate::argparse_clap::generate_completions(shell);
+        return Ok(());
+    }
+
     let graph =
         graph::UniqueLinks::new(&opts.files, &opts.source_pattern, &opts.dest_pattern, true)?;
     graph.collision_check()?;

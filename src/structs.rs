@@ -1,5 +1,6 @@
 use std::path::PathBuf;
 
+#[derive(Default)]
 pub(crate) struct Opts {
     pub(crate) files: Vec<PathBuf>,
     pub(crate) copy_bool: bool,
