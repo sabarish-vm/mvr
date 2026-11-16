@@ -1,3 +1,4 @@
+use anyhow::Context;
 use clap::{Arg, ArgAction, Command, builder::NonEmptyStringValueParser};
 use std::path::PathBuf;
 
@@ -58,12 +59,12 @@ fn build_parser() -> Command {
         )
 }
 
-pub(crate) fn argparse() -> Opts {
+pub fn argparse() -> Result<Opts, anyhow::Error> {
     let matches = build_parser().get_matches();
     let files = matches
         .get_many::<String>("paths")
-        .unwrap()
-        .map(|s| s.into())
+        .with_context(|| "Error while parsing the passed input paths")?
+        .map(PathBuf::from)
         .collect::<Vec<PathBuf>>();
     let m_bool: bool = matches.get_flag("move");
     let c_bool: bool = matches.get_flag("copy");
@@ -71,13 +72,15 @@ pub(crate) fn argparse() -> Opts {
     let log_bool: bool = matches.get_flag("log");
     let sp = matches
         .get_one::<String>("source_pattern")
-        .unwrap()
+        .with_context(|| "Cli arg parsing error while parsing the pattern for the source file")?
         .to_owned();
     let dp = matches
         .get_one::<String>("dest_pattern")
-        .unwrap()
+        .with_context(
+            || "Cli arg parsing error while parsing the pattern for the destination file",
+        )?
         .to_owned();
-    Opts {
+    Ok(Opts {
         move_bool: m_bool,
         copy_bool: c_bool,
         force_run: f_bool,
@@ -85,7 +88,7 @@ pub(crate) fn argparse() -> Opts {
         files,
         source_pattern: sp,
         dest_pattern: dp,
-    }
+    })
 }
 
 #[cfg(test)]

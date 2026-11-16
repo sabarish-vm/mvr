@@ -9,10 +9,25 @@ use crate::graph::HasCollisionCheck;
 use crate::structs::Color;
 
 fn main() {
-    let opts = argparse();
-    let graph =
-        graph::UniqueLinks::new(&opts.files, &opts.source_pattern, &opts.dest_pattern, true)
-            .unwrap();
+    let opts = match argparse() {
+        Ok(o) => o,
+        Err(e) => {
+            eprintln!("Error occured : {e}");
+            return;
+        }
+    };
+    let graph = match graph::UniqueLinks::new(
+        &opts.files,
+        &opts.source_pattern,
+        &opts.dest_pattern,
+        true,
+    ) {
+        Ok(g) => g,
+        Err(e) => {
+            eprintln!("Error occured : {e}");
+            return;
+        }
+    };
     graph.collision_check();
 
     if opts.copy_bool && !opts.force_run {

@@ -57,7 +57,6 @@ impl UniqueLinks {
         let mut sources_metadata: Vec<fs::Metadata> = Vec::with_capacity(input_file_count + 1);
         let mut sources: Vec<usize> = Vec::with_capacity(input_file_count + 1);
         let mut destinations: Vec<usize> = Vec::with_capacity(input_file_count + 1);
-        let mut next_id = 0..;
 
         if input_file_count > 0 {
             for f in input_files {
@@ -89,12 +88,10 @@ impl UniqueLinks {
                     None => continue,
                 };
                 let dest_path_str: &'static str = String::leak(dest_path_str);
-                let s_id = *string_to_id
-                    .entry(source_path_str)
-                    .or_insert_with(|| next_id.next().unwrap());
-                let d_id = *string_to_id
-                    .entry(dest_path_str)
-                    .or_insert_with(|| next_id.next().unwrap());
+                let next_s_id = string_to_id.len();
+                let s_id = *string_to_id.entry(source_path_str).or_insert(next_s_id);
+                let next_d_id = string_to_id.len();
+                let d_id = *string_to_id.entry(dest_path_str).or_insert(next_d_id);
                 match test_mode {
                     true => {
                         if dest_filename == source_filename {
@@ -174,8 +171,8 @@ impl UniqueLinks {
     }
     pub fn print_graph(&self, display_paths: bool) {
         for (sid, did) in &self.link_map {
-            let source_path = self.id_to_path.get(sid).unwrap();
-            let dest_path = self.id_to_path.get(did).unwrap();
+            let source_path = self.get_id(sid);
+            let dest_path = self.get_id(did);
             let colored_source =
                 UniqueLinks::highlight_path_diff(source_path, dest_path, crate::Color::Red);
             let colored_dest =
@@ -203,8 +200,8 @@ impl UniqueLinks {
     pub fn copy(&self) -> OperationStatus {
         let mut status = OperationStatus::new(self.processing_file_count);
         for (sid, did) in &self.link_map {
-            let source_path = Path::new(self.id_to_path.get(sid).unwrap());
-            let dest_path = Path::new(self.id_to_path.get(did).unwrap());
+            let source_path = Path::new(self.get_id(sid));
+            let dest_path = Path::new(self.get_id(did));
             match file_ops::atomic_copy(source_path, dest_path) {
                 Ok(_) => {
                     status
@@ -230,8 +227,9 @@ impl UniqueLinks {
     pub(crate) fn rename(&self) -> OperationStatus {
         let mut status = OperationStatus::new(self.processing_file_count);
         for (sid, did) in &self.link_map {
-            let source_path = Path::new(self.id_to_path.get(sid).unwrap());
-            let dest_path = Path::new(self.id_to_path.get(did).unwrap());
+            let source_path = Path::new(self.get_id(sid));
+            let dest_path = Path::new(self.get_id(did));
+
             match file_ops::atomic_rename(source_path, dest_path) {
                 Ok(_) => {
                     status
@@ -253,6 +251,11 @@ impl UniqueLinks {
             }
         }
         status
+    }
+
+    fn get_id(&self, id: &usize) -> &&str {
+        let x = self.id_to_path.get(id);
+        x.expect("graph contains an id with no path entry")
     }
 }
 

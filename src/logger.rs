@@ -1,13 +1,15 @@
-use crate::structs::OperationStatus;
+use anyhow::Context;
 use std::fs::File;
 use std::io::BufWriter;
 use std::io::Write;
 use std::time::{SystemTime, UNIX_EPOCH};
 
+use crate::structs::OperationStatus;
+
 pub(crate) fn generate_json_string(status: &OperationStatus) -> Result<(), anyhow::Error> {
     let filename = SystemTime::now()
         .duration_since(UNIX_EPOCH)
-        .unwrap()
+        .context("Errored when calculating time since UNIX_EPOCH")?
         .as_secs();
     let filepath = std::env::current_dir()?;
     let filepath = filepath.join(format!("mvr_job_{filename}.json"));
