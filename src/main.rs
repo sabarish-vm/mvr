@@ -8,28 +8,11 @@ use crate::argparse_clap::argparse;
 use crate::graph::HasCollisionCheck;
 use crate::structs::Color;
 
-fn main() {
-    let opts = match argparse() {
-        Ok(o) => o,
-        Err(e) => {
-            eprintln!("Error occured : {e}");
-            return;
-        }
-    };
-    let graph = match graph::UniqueLinks::new(
-        &opts.files,
-        &opts.source_pattern,
-        &opts.dest_pattern,
-        true,
-    ) {
-        Ok(g) => g,
-        Err(e) => {
-            eprintln!("Error occured : {e}");
-            return;
-        }
-    };
-    graph.collision_check();
-
+fn main() -> anyhow::Result<()> {
+    let opts = argparse()?;
+    let graph =
+        graph::UniqueLinks::new(&opts.files, &opts.source_pattern, &opts.dest_pattern, true)?;
+    graph.collision_check()?;
     if opts.copy_bool && !opts.force_run {
         println!(
             "\n{}This is a DRY run for copying {}",
@@ -57,4 +40,5 @@ fn main() {
             let _ = crate::logger::generate_json_string(&status);
         }
     }
+    Ok(())
 }

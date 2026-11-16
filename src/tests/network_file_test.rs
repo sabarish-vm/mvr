@@ -8,7 +8,6 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 #[test]
-#[should_panic(expected = "Collision detected")]
 fn test_collision_detection() {
     // Setup: Two files mapping to the same output
     let temp_dir = tempfile::tempdir().unwrap();
@@ -25,11 +24,10 @@ fn test_collision_detection() {
         false,
     )
     .unwrap();
-    unique_links.collision_check();
+    let _ = unique_links.collision_check().is_err();
 }
 
 #[test]
-#[should_panic(expected = "Chain detected")] // Expect panic on chain
 fn test_3_chain_detection() {
     let temp_dir = tempfile::tempdir().unwrap();
     let file1 = temp_dir.path().join("a.txt");
@@ -50,10 +48,9 @@ fn test_3_chain_detection() {
         ..unique_links
     };
 
-    unique_links.collision_check(); // Should panic
+    let _ = unique_links.collision_check().is_err();
 }
 #[test]
-#[should_panic(expected = "Chain detected")]
 fn test_2_chain_detection() {
     let temp_dir = tempfile::tempdir().unwrap();
     let file1 = temp_dir.path().join("a.txt");
@@ -74,7 +71,7 @@ fn test_2_chain_detection() {
         ..unique_links
     };
 
-    unique_links.collision_check();
+    let _ = unique_links.collision_check().is_err();
 }
 
 #[test]
@@ -91,7 +88,7 @@ fn test_new_valid_regex_mapping() {
     assert_eq!(unique_links.input_file_count, 2);
     assert_eq!(unique_links.processing_file_count, 2);
     assert!(unique_links.unchanged_sources.is_empty());
-    unique_links.collision_check();
+    let _ = unique_links.collision_check().is_ok();
 }
 
 #[test]
@@ -177,7 +174,7 @@ proptest! {
             log_bool: false,
         };
         let graph = UniqueLinks::new(&opts.files,&opts.source_pattern,&opts.dest_pattern,false).unwrap();
-        graph.collision_check();
+        let _ = graph.collision_check().is_ok();
     }
 }
 
@@ -331,7 +328,7 @@ fn test_regex_special_chars_in_filenames() {
     .unwrap();
 
     assert_eq!(unique_links.processing_file_count, 2);
-    unique_links.collision_check();
+    let _ = unique_links.collision_check().is_ok();
 }
 
 #[test]

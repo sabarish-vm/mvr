@@ -10,7 +10,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 pub(crate) trait HasCollisionCheck {
-    fn collision_check(&self);
+    fn collision_check(&self) -> anyhow::Result<()>;
 }
 
 #[allow(dead_code)]
@@ -27,15 +27,18 @@ pub(crate) struct UniqueLinks {
 }
 
 impl HasCollisionCheck for UniqueLinks {
-    fn collision_check(&self) {
+    fn collision_check(&self) -> anyhow::Result<()> {
         let x: HashSet<_> = self.sources.iter().collect();
         let y: HashSet<_> = self.destinations.iter().collect();
         if y.len() != x.len() {
-            panic!("Collision detected: Mapping between input to output files is not one-to-one");
+            anyhow::bail!(
+                "Collision detected: Mapping between input to output files is not one-to-one"
+            );
         }
         if x.intersection(&y).next().is_some() {
-            panic!("Chain detected: An output file is used as an input elsewhere!");
+            anyhow::bail!("Chain detected: An output file is used as an input elsewhere!");
         }
+        Ok(())
     }
 }
 
@@ -191,7 +194,7 @@ impl UniqueLinks {
         match err_string.find(':') {
             Some(index) => (
                 err_string[..index].trim().to_string(),
-                err_string[..index].trim().to_string(),
+                err_string[index..].trim().to_string(),
             ),
             None => ("UNKNOWN".to_string(), err_string.trim().to_string()),
         }
