@@ -2,6 +2,12 @@
 name = "mvr"
 version = "0.2.0"
 edition = "2024"
+description = "A cli tool that can move and also copy using regex patterns."
+license = "GNU AGPLv3"
+repository = "https://github.com/sabarish-vm/mvr"
+readme = "README.md"
+keywords = ["cli", "unix", "rename"]
+categories = ["command-line-utilities"]
 
 [dependencies]
 regex = "1.12.3"

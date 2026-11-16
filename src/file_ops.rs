@@ -4,6 +4,25 @@ use std::io;
 use std::os::unix::fs::MetadataExt;
 use std::path::Path;
 
+fn is_case_only_rename(src: &Path, dst: &Path) -> bool {
+    match (src.parent(), dst.parent(), src.file_name(), dst.file_name()) {
+        (Some(p1), Some(p2), Some(n1), Some(n2)) => {
+            p1 == p2 && n1 != n2 && n1.eq_ignore_ascii_case(n2)
+        }
+        _ => false,
+    }
+}
+fn is_same_file(src: &Path, dst: &Path) -> anyhow::Result<bool> {
+    let source_metadata = fs::symlink_metadata(src)
+        .with_context(|| anyhow::anyhow!("ECP001 for the file : {:?}", src))?;
+    let dest_metadata = fs::symlink_metadata(dst)
+        .with_context(|| anyhow::anyhow!("ECP001 for the file : {:?}", dst))?;
+    Ok(
+        source_metadata.dev() == dest_metadata.dev()
+            && source_metadata.ino() == dest_metadata.ino(),
+    )
+}
+
 pub(crate) fn atomic_copy(source_path: &Path, dest_path: &Path) -> Result<(), anyhow::Error> {
     if source_path.is_dir() {
         anyhow::bail!(
@@ -72,10 +91,6 @@ pub(crate) fn atomic_copy(source_path: &Path, dest_path: &Path) -> Result<(), an
         let target_permissions = fs::Permissions::from_mode(source_mode);
         fs::set_permissions(dest_path, target_permissions)?;
     }
-    #[cfg(not(unix))]
-    {
-        fs::set_permissions(dest_path, source_metadata.permissions())?;
-    }
     Ok(())
 }
 
@@ -85,10 +100,23 @@ pub(crate) fn atomic_rename(source_path: &Path, dest_path: &Path) -> Result<(), 
     match fs::exists(dest_path) {
         Ok(x) => {
             if x {
-                return Err(anyhow::anyhow!(
-                    "ERN001 : Target file {:?} already exists or was created mid-rename-operation.",
-                    dest_path
-                ));
+                let is_it_the_same_file = match is_same_file(source_path, dest_path) {
+                    Ok(b) => b,
+                    Err(e) => {
+                        return Err(anyhow::anyhow!(
+                            "ERN001 : Error with the malformed or prexisting target file {:?} : {e}",
+                            dest_path
+                        ));
+                    }
+                };
+                // Only passes when is_case_only_rename and is_it_the_same_file are both true
+                // If not do not rename, report an error and move on
+                if !is_case_only_rename(source_path, dest_path) || !is_it_the_same_file {
+                    return Err(anyhow::anyhow!(
+                        "ERN001 : Target file {:?} already exists or was created mid-rename-operation.",
+                        dest_path
+                    ));
+                }
             }
         }
         Err(e) => {
@@ -113,10 +141,14 @@ pub(crate) fn atomic_rename(source_path: &Path, dest_path: &Path) -> Result<(), 
                 "Source and destination are on different devices. Aborting for safety."
             )),
             other_kind => Err(anyhow::anyhow!(
-                "ERN003 : Some error during FileCopy. Kind: {:?}, Details: {}",
+                "ERN003 : Some error during file moving. Kind: {:?}, Details: {}",
                 other_kind,
                 x
             )),
         },
     }
 }
+
+#[cfg(test)]
+#[path = "./tests/rename_tests.rs"]
+mod rename_tests;
